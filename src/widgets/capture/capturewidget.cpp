@@ -148,24 +148,13 @@ CaptureWidget::CaptureWidget(const CaptureRequest& req,
                 windowHandle()->setScreen(selectedScreen);
             }
         } else {
-            // Multi-monitor mode: span all screens
+            // Multi-monitor mode: span all screens using logical coordinates
+            QRect logicalBounds;
             for (QScreen* const screen : QGuiApplication::screens()) {
-                QPoint topLeftScreen = screen->geometry().topLeft();
-                if (topLeftScreen.x() < topLeft.x()) {
-                    topLeft.setX(topLeftScreen.x());
-                }
-                if (topLeftScreen.y() < topLeft.y()) {
-                    topLeft.setY(topLeftScreen.y());
-                }
+                logicalBounds = logicalBounds.united(screen->geometry());
             }
-            move(topLeft);
-            QSize windowSize = pixmap().size();
-            if (pixmap().devicePixelRatio() > 1.0) {
-                windowSize =
-                  QSize(pixmap().width() / pixmap().devicePixelRatio(),
-                        pixmap().height() / pixmap().devicePixelRatio());
-            }
-            resize(windowSize);
+            move(logicalBounds.topLeft());
+            resize(logicalBounds.size());
 
             // Enumerate windows for snap-to-window detection
             m_windowDetector.refresh();

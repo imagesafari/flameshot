@@ -486,30 +486,14 @@ QPixmap ScreenGrabber::cropToMonitor(const QPixmap& fullScreenshot,
     cropWidth = qRound(targetGeometry.width() * screenshotScaleX);
     cropHeight = qRound(targetGeometry.height() * screenshotScaleY);
 #else
-    // Windows: Calculate physical pixel positions for mixed DPI
-    cropX = 0;
-    cropY = 0;
-
-    for (QScreen* screen : screens) {
-        QRect geom = screen->geometry();
-        qreal dpr = screen->devicePixelRatio();
-
-        // Sum physical widths of screens completely to the left
-        if (geom.x() + geom.width() <= targetGeometry.x()) {
-            cropX += qRound(geom.width() * dpr);
-        }
-
-        // Sum physical heights of screens completely above
-        if (geom.y() + geom.height() <= targetGeometry.y()) {
-            cropY += qRound(geom.height() * dpr);
-        }
-    }
-
-    cropWidth = qRound(targetGeometry.width() * targetDpr);
-    cropHeight = qRound(targetGeometry.height() * targetDpr);
+    // Windows: Screenshot is now in logical coordinates, so crop directly
+    cropX = targetGeometry.x() - minX;
+    cropY = targetGeometry.y() - minY;
+    cropWidth = targetGeometry.width();
+    cropHeight = targetGeometry.height();
 
 #ifdef FLAMESHOT_DEBUG_CAPTURE
-    qDebug() << tr("Calculated crop position for mixed DPI: X=%1 Y=%2")
+    qDebug() << tr("Calculated crop position (logical): X=%1 Y=%2")
                   .arg(cropX)
                   .arg(cropY);
 #endif
@@ -569,65 +553,17 @@ QPixmap ScreenGrabber::cropToMonitor(const QPixmap& fullScreenshot,
 QPixmap ScreenGrabber::windowsScreenshot(int wid)
 {
     const QList<QScreen*> screens = QGuiApplication::screens();
-    QRect geometry = desktopGeometry();
 
-    int canvasWidth = 0;
-    int canvasHeight = 0;
-
-    // Build a map tracking where each screen should be positioned in
-    // physical pixels
-    struct ScreenInfo
-    {
-        QRect physicalRect; // Where to draw in the canvas
-        QPixmap pixmap;
-    };
-    QMap<QScreen*, ScreenInfo> screenInfos;
-
-    int minLogicalX = geometry.x();
-    int minLogicalY = geometry.y();
-
+    // Compute the bounding box of all screens in logical coordinates
+    QRect logicalBounds;
     for (QScreen* screen : screens) {
-        QRect screenGeom = screen->geometry();
-        qreal screenDpr = screen->devicePixelRatio();
-
-        QPixmap screenPixmap = screen->grabWindow(wid);
-        screenPixmap.setDevicePixelRatio(1.0);
-
-        int logicalX = screenGeom.x() - minLogicalX;
-        int logicalY = screenGeom.y() - minLogicalY;
-
-        int physicalWidth = screenPixmap.width();
-        int physicalHeight = screenPixmap.height();
-
-        int physicalX = 0;
-        int physicalY = 0;
-
-        for (QScreen* otherScreen : screens) {
-            QRect otherGeom = otherScreen->geometry();
-            qreal otherDpr = otherScreen->devicePixelRatio();
-
-            // If this screen is entirely to the left of current screen
-            if (otherGeom.x() + otherGeom.width() <= screenGeom.x()) {
-                physicalX += qRound(otherGeom.width() * otherDpr);
-            }
-
-            // If this screen is entirely above the current screen
-            if (otherGeom.y() + otherGeom.height() <= screenGeom.y()) {
-                physicalY += qRound(otherGeom.height() * otherDpr);
-            }
-        }
-
-        ScreenInfo info;
-        info.physicalRect =
-          QRect(physicalX, physicalY, physicalWidth, physicalHeight);
-        info.pixmap = screenPixmap;
-        screenInfos[screen] = info;
-
-        canvasWidth = qMax(canvasWidth, physicalX + physicalWidth);
-        canvasHeight = qMax(canvasHeight, physicalY + physicalHeight);
+        logicalBounds = logicalBounds.united(screen->geometry());
     }
 
-    // Composite all screens onto canvas
+    int canvasWidth = logicalBounds.width();
+    int canvasHeight = logicalBounds.height();
+
+    // Create canvas in logical pixel dimensions
     QPixmap desktop(canvasWidth, canvasHeight);
     desktop.fill(Qt::black);
 
@@ -635,8 +571,19 @@ QPixmap ScreenGrabber::windowsScreenshot(int wid)
     painter.setCompositionMode(QPainter::CompositionMode_Source);
 
     for (QScreen* screen : screens) {
-        const ScreenInfo& info = screenInfos[screen];
-        painter.drawPixmap(info.physicalRect.topLeft(), info.pixmap);
+        QPixmap screenPixmap = screen->grabWindow(wid);
+        screenPixmap.setDevicePixelRatio(1.0);
+
+        // Position in logical coordinates relative to canvas origin
+        QRect screenGeom = screen->geometry();
+        int logicalX = screenGeom.x() - logicalBounds.x();
+        int logicalY = screenGeom.y() - logicalBounds.y();
+
+        // Scale the physical-pixel grab to fit the logical screen size
+        painter.drawPixmap(
+          QRect(logicalX, logicalY, screenGeom.width(), screenGeom.height()),
+          screenPixmap,
+          screenPixmap.rect());
     }
     painter.end();
 

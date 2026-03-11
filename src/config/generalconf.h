@@ -54,6 +54,9 @@ private slots:
     void resetConfiguration();
     void togglePathFixed();
     void uploadClientKeyEdited();
+    void uploadStorageChanged(int index);
+    void screenshottyServerUrlEdited();
+    void screenshottyApiKeyEdited();
     void useJpgForClipboardChanged(bool checked);
     void setSaveAsFileExtension(const QString& extension);
     void setGeometryLocation(int index);
@@ -93,6 +96,7 @@ private:
     void initUploadWithoutConfirmation();
     void initUseJpgForClipboard();
     void initUploadHistoryMax();
+    void initUploadStorage();
     void initUploadClientSecret();
     void initSaveLastRegion();
     void initShowSelectionGeometry();
@@ -129,7 +133,12 @@ private:
     QPushButton* m_resetButton;
     QCheckBox* m_saveAfterCopy;
     QLineEdit* m_savePath;
+    QComboBox* m_uploadStorage;
     QLineEdit* m_uploadClientKey;
+    QWidget* m_imgurSettings;
+    QWidget* m_screenshottySettings;
+    QLineEdit* m_screenshottyServerUrl;
+    QLineEdit* m_screenshottyApiKey;
     QPushButton* m_changeSaveButton;
     QCheckBox* m_screenshotPathFixedCheck;
     QCheckBox* m_historyConfirmationToDelete;

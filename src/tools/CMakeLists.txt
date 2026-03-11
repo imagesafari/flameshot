@@ -12,6 +12,8 @@ target_sources(
   flameshot
         PRIVATE imgupload/storages/imgur/imguruploader.h
         imgupload/storages/imgur/imguruploader.cpp
+        imgupload/storages/screenshotty/screenshottyuploader.h
+        imgupload/storages/screenshotty/screenshottyuploader.cpp
         imgupload/storages/imguploaderbase.h
         imgupload/storages/imguploaderbase.cpp
         imgupload/imguploadertool.h

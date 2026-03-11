@@ -60,6 +60,7 @@ GeneralConf::GeneralConf(QWidget* parent)
     initUploadWithoutConfirmation();
     initHistoryConfirmationToDelete();
     initUploadHistoryMax();
+    initUploadStorage();
     initUploadClientSecret();
 #endif
     initPredefinedColorPaletteLarge();
@@ -96,6 +97,16 @@ void GeneralConf::_updateComponents(bool allowEmptySavePath)
       config.historyConfirmationToDelete());
 
     m_uploadHistoryMax->setValue(config.uploadHistoryMax());
+
+    {
+        QString storage = config.uploadStorage();
+        int idx = m_uploadStorage->findData(storage);
+        if (idx >= 0) {
+            m_uploadStorage->setCurrentIndex(idx);
+        }
+        m_screenshottyServerUrl->setText(config.screenshottyServerUrl());
+        m_screenshottyApiKey->setText(config.screenshottyApiKey());
+    }
 #endif
 #if !defined(DISABLE_UPDATE_CHECKER)
     m_checkForUpdates->setChecked(config.checkForUpdates());
@@ -590,11 +601,100 @@ void GeneralConf::initUploadHistoryMax()
     vboxLayout->addWidget(m_uploadHistoryMax);
 }
 
-void GeneralConf::initUploadClientSecret()
+void GeneralConf::initUploadStorage()
 {
-    auto* box = new QGroupBox(tr("Imgur Application Client ID"));
+    auto* box = new QGroupBox(tr("Upload Storage"));
     box->setFlat(true);
     m_layout->addWidget(box);
+
+    auto* vboxLayout = new QVBoxLayout();
+    box->setLayout(vboxLayout);
+
+    m_uploadStorage = new QComboBox(this);
+    m_uploadStorage->addItem(tr("Imgur"), "imgur");
+    m_uploadStorage->addItem(tr("Screenshotty"), "screenshotty");
+
+    QString current = ConfigHandler().uploadStorage();
+    int idx = m_uploadStorage->findData(current);
+    if (idx >= 0) {
+        m_uploadStorage->setCurrentIndex(idx);
+    }
+
+    connect(
+      m_uploadStorage,
+      static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
+      this,
+      &GeneralConf::uploadStorageChanged);
+    vboxLayout->addWidget(m_uploadStorage);
+
+    // Imgur settings container
+    m_imgurSettings = new QWidget(this);
+    auto* imgurLayout = new QVBoxLayout(m_imgurSettings);
+    imgurLayout->setContentsMargins(0, 0, 0, 0);
+    vboxLayout->addWidget(m_imgurSettings);
+
+    // Screenshotty settings container
+    m_screenshottySettings = new QWidget(this);
+    auto* screenshottyLayout = new QVBoxLayout(m_screenshottySettings);
+    screenshottyLayout->setContentsMargins(0, 0, 0, 0);
+
+    QString foreground = this->palette().windowText().color().name();
+
+    screenshottyLayout->addWidget(new QLabel(tr("Server URL")));
+    m_screenshottyServerUrl = new QLineEdit(this);
+    m_screenshottyServerUrl->setPlaceholderText(
+      tr("https://your-server.example.com"));
+    m_screenshottyServerUrl->setStyleSheet(
+      QStringLiteral("color: %1").arg(foreground));
+    m_screenshottyServerUrl->setText(ConfigHandler().screenshottyServerUrl());
+    connect(m_screenshottyServerUrl,
+            &QLineEdit::editingFinished,
+            this,
+            &GeneralConf::screenshottyServerUrlEdited);
+    screenshottyLayout->addWidget(m_screenshottyServerUrl);
+
+    screenshottyLayout->addWidget(new QLabel(tr("API Key")));
+    m_screenshottyApiKey = new QLineEdit(this);
+    m_screenshottyApiKey->setPlaceholderText(tr("Bearer token from admin panel"));
+    m_screenshottyApiKey->setStyleSheet(
+      QStringLiteral("color: %1").arg(foreground));
+    m_screenshottyApiKey->setText(ConfigHandler().screenshottyApiKey());
+    connect(m_screenshottyApiKey,
+            &QLineEdit::editingFinished,
+            this,
+            &GeneralConf::screenshottyApiKeyEdited);
+    screenshottyLayout->addWidget(m_screenshottyApiKey);
+
+    vboxLayout->addWidget(m_screenshottySettings);
+
+    // Show/hide the right settings panel
+    uploadStorageChanged(m_uploadStorage->currentIndex());
+}
+
+void GeneralConf::uploadStorageChanged(int index)
+{
+    QString storage = m_uploadStorage->itemData(index).toString();
+    ConfigHandler().setUploadStorage(storage);
+    m_imgurSettings->setVisible(storage == "imgur");
+    m_screenshottySettings->setVisible(storage == "screenshotty");
+}
+
+void GeneralConf::screenshottyServerUrlEdited()
+{
+    ConfigHandler().setScreenshottyServerUrl(m_screenshottyServerUrl->text());
+}
+
+void GeneralConf::screenshottyApiKeyEdited()
+{
+    ConfigHandler().setScreenshottyApiKey(m_screenshottyApiKey->text());
+}
+
+void GeneralConf::initUploadClientSecret()
+{
+    // This widget is parented to the imgur settings container
+    auto* box = new QGroupBox(tr("Imgur Application Client ID"));
+    box->setFlat(true);
+    m_imgurSettings->layout()->addWidget(box);
 
     auto* vboxLayout = new QVBoxLayout();
     box->setLayout(vboxLayout);

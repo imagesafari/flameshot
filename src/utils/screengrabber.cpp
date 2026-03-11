@@ -486,14 +486,20 @@ QPixmap ScreenGrabber::cropToMonitor(const QPixmap& fullScreenshot,
     cropWidth = qRound(targetGeometry.width() * screenshotScaleX);
     cropHeight = qRound(targetGeometry.height() * screenshotScaleY);
 #else
-    // Windows: Screenshot is now in logical coordinates, so crop directly
-    cropX = targetGeometry.x() - minX;
-    cropY = targetGeometry.y() - minY;
-    cropWidth = targetGeometry.width();
-    cropHeight = targetGeometry.height();
+    // Windows: Screenshot is at maxDpr physical pixels, positioned in
+    // logical coordinates scaled by maxDpr
+    qreal maxDpr = 1.0;
+    for (QScreen* screen : screens) {
+        maxDpr = qMax(maxDpr, screen->devicePixelRatio());
+    }
+    cropX = qRound((targetGeometry.x() - minX) * maxDpr);
+    cropY = qRound((targetGeometry.y() - minY) * maxDpr);
+    cropWidth = qRound(targetGeometry.width() * maxDpr);
+    cropHeight = qRound(targetGeometry.height() * maxDpr);
 
 #ifdef FLAMESHOT_DEBUG_CAPTURE
-    qDebug() << tr("Calculated crop position (logical): X=%1 Y=%2")
+    qDebug() << tr("Calculated crop position (maxDpr=%1): X=%2 Y=%3")
+                  .arg(maxDpr)
                   .arg(cropX)
                   .arg(cropY);
 #endif
@@ -556,16 +562,22 @@ QPixmap ScreenGrabber::windowsScreenshot(int wid)
 
     // Compute the bounding box of all screens in logical coordinates
     QRect logicalBounds;
+    qreal maxDpr = 1.0;
     for (QScreen* screen : screens) {
         logicalBounds = logicalBounds.united(screen->geometry());
+        maxDpr = qMax(maxDpr, screen->devicePixelRatio());
     }
 
-    int canvasWidth = logicalBounds.width();
-    int canvasHeight = logicalBounds.height();
+    // Create canvas at the highest DPR so high-res monitors keep full quality.
+    // Lower-DPI screens get upscaled slightly (no loss — they have fewer
+    // physical pixels anyway). Setting the pixmap DPR tells Qt to scale it
+    // back to logical size when drawing onto the widget.
+    int canvasWidth = qRound(logicalBounds.width() * maxDpr);
+    int canvasHeight = qRound(logicalBounds.height() * maxDpr);
 
-    // Create canvas in logical pixel dimensions
     QPixmap desktop(canvasWidth, canvasHeight);
     desktop.fill(Qt::black);
+    desktop.setDevicePixelRatio(maxDpr);
 
     QPainter painter(&desktop);
     painter.setCompositionMode(QPainter::CompositionMode_Source);
@@ -574,12 +586,13 @@ QPixmap ScreenGrabber::windowsScreenshot(int wid)
         QPixmap screenPixmap = screen->grabWindow(wid);
         screenPixmap.setDevicePixelRatio(1.0);
 
-        // Position in logical coordinates relative to canvas origin
+        // Position in logical coordinates relative to canvas origin.
+        // Since the pixmap has DPR set, QPainter maps logical coords to
+        // physical pixels automatically.
         QRect screenGeom = screen->geometry();
         int logicalX = screenGeom.x() - logicalBounds.x();
         int logicalY = screenGeom.y() - logicalBounds.y();
 
-        // Scale the physical-pixel grab to fit the logical screen size
         painter.drawPixmap(
           QRect(logicalX, logicalY, screenGeom.width(), screenGeom.height()),
           screenPixmap,

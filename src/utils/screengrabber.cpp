@@ -26,6 +26,10 @@
 #include <QDebug>
 #endif
 
+#if defined(Q_OS_WIN)
+#include <windows.h>
+#endif
+
 #if !(defined(Q_OS_MACOS) || defined(Q_OS_WIN))
 #include "request.h"
 #include <QDBusInterface>
@@ -486,23 +490,12 @@ QPixmap ScreenGrabber::cropToMonitor(const QPixmap& fullScreenshot,
     cropWidth = qRound(targetGeometry.width() * screenshotScaleX);
     cropHeight = qRound(targetGeometry.height() * screenshotScaleY);
 #else
-    // Windows: Screenshot is at maxDpr physical pixels, positioned in
-    // logical coordinates scaled by maxDpr
-    qreal maxDpr = 1.0;
-    for (QScreen* screen : screens) {
-        maxDpr = qMax(maxDpr, screen->devicePixelRatio());
-    }
-    cropX = qRound((targetGeometry.x() - minX) * maxDpr);
-    cropY = qRound((targetGeometry.y() - minY) * maxDpr);
-    cropWidth = qRound(targetGeometry.width() * maxDpr);
-    cropHeight = qRound(targetGeometry.height() * maxDpr);
-
-#ifdef FLAMESHOT_DEBUG_CAPTURE
-    qDebug() << tr("Calculated crop position (maxDpr=%1): X=%2 Y=%3")
-                  .arg(maxDpr)
-                  .arg(cropX)
-                  .arg(cropY);
-#endif
+    // Windows: Screenshot is captured via BitBlt in logical coordinates,
+    // so crop using logical coordinates directly
+    cropX = targetGeometry.x() - minX;
+    cropY = targetGeometry.y() - minY;
+    cropWidth = targetGeometry.width();
+    cropHeight = targetGeometry.height();
 #endif
 
     QRect cropRect(cropX, cropY, cropWidth, cropHeight);
@@ -550,55 +543,61 @@ QPixmap ScreenGrabber::cropToMonitor(const QPixmap& fullScreenshot,
 #endif
     }
 #endif
+#if defined(Q_OS_WIN)
+    // Windows BitBlt captures at logical resolution, DPR stays at 1.0
+    cropped.setDevicePixelRatio(1.0);
+#else
     // Cropped region should be at target monitor's native DPR
     cropped.setDevicePixelRatio(targetDpr);
+#endif
 
     return cropped;
 }
 
 QPixmap ScreenGrabber::windowsScreenshot(int wid)
 {
-    const QList<QScreen*> screens = QGuiApplication::screens();
+    Q_UNUSED(wid)
 
-    // Compute the bounding box of all screens in logical coordinates
-    QRect logicalBounds;
-    qreal maxDpr = 1.0;
-    for (QScreen* screen : screens) {
-        logicalBounds = logicalBounds.united(screen->geometry());
-        maxDpr = qMax(maxDpr, screen->devicePixelRatio());
+    // Use Win32 BitBlt to capture the entire virtual desktop in one shot,
+    // exactly like ShareX does. Windows handles per-monitor DPI compositing
+    // internally, so we get a single bitmap in logical coordinates that
+    // matches the virtual screen bounds — no manual per-screen compositing
+    // and no DPI scaling artifacts.
+    int x = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    int y = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    int width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    int height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+
+    if (width == 0 || height == 0) {
+        return QPixmap();
     }
 
-    // Create canvas at the highest DPR so high-res monitors keep full quality.
-    // Lower-DPI screens get upscaled slightly (no loss — they have fewer
-    // physical pixels anyway). Setting the pixmap DPR tells Qt to scale it
-    // back to logical size when drawing onto the widget.
-    int canvasWidth = qRound(logicalBounds.width() * maxDpr);
-    int canvasHeight = qRound(logicalBounds.height() * maxDpr);
+    HDC hdcScreen = GetDC(NULL);
+    HDC hdcMem = CreateCompatibleDC(hdcScreen);
+    HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, width, height);
+    HBITMAP hOld = (HBITMAP)SelectObject(hdcMem, hBitmap);
 
-    QPixmap desktop(canvasWidth, canvasHeight);
-    desktop.fill(Qt::black);
-    desktop.setDevicePixelRatio(maxDpr);
+    BitBlt(hdcMem, 0, 0, width, height, hdcScreen, x, y,
+           SRCCOPY | CAPTUREBLT);
 
-    QPainter painter(&desktop);
-    painter.setCompositionMode(QPainter::CompositionMode_Source);
+    // Convert HBITMAP to QImage
+    BITMAPINFOHEADER bi;
+    ZeroMemory(&bi, sizeof(bi));
+    bi.biSize = sizeof(BITMAPINFOHEADER);
+    bi.biWidth = width;
+    bi.biHeight = -height; // top-down DIB
+    bi.biPlanes = 1;
+    bi.biBitCount = 32;
+    bi.biCompression = BI_RGB;
 
-    for (QScreen* screen : screens) {
-        QPixmap screenPixmap = screen->grabWindow(wid);
-        screenPixmap.setDevicePixelRatio(1.0);
+    QImage image(width, height, QImage::Format_ARGB32);
+    GetDIBits(hdcMem, hBitmap, 0, height, image.bits(),
+              (BITMAPINFO*)&bi, DIB_RGB_COLORS);
 
-        // Position in logical coordinates relative to canvas origin.
-        // Since the pixmap has DPR set, QPainter maps logical coords to
-        // physical pixels automatically.
-        QRect screenGeom = screen->geometry();
-        int logicalX = screenGeom.x() - logicalBounds.x();
-        int logicalY = screenGeom.y() - logicalBounds.y();
+    SelectObject(hdcMem, hOld);
+    DeleteObject(hBitmap);
+    DeleteDC(hdcMem);
+    ReleaseDC(NULL, hdcScreen);
 
-        painter.drawPixmap(
-          QRect(logicalX, logicalY, screenGeom.width(), screenGeom.height()),
-          screenPixmap,
-          screenPixmap.rect());
-    }
-    painter.end();
-
-    return desktop;
+    return QPixmap::fromImage(image);
 }

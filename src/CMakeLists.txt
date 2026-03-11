@@ -239,6 +239,7 @@ if (WIN32)
 target_link_libraries(
         flameshot
         dwmapi
+        gdi32
 )
 endif()
 

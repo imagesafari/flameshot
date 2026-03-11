@@ -235,6 +235,13 @@ target_link_libraries(
 )
 endif()
 
+if (WIN32)
+target_link_libraries(
+        flameshot
+        dwmapi
+)
+endif()
+
 if (USE_KDSINGLEAPPLICATION)
   message(STATUS "KDSingleApplication is used!")
   add_compile_definitions(USE_KDSINGLEAPPLICATION=1)

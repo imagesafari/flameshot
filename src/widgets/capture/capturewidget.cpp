@@ -134,14 +134,23 @@ CaptureWidget::CaptureWidget(const CaptureRequest& req,
                        Qt::SubWindow // Hides the taskbar icon
         );
 #endif
-        // Position the window at the selected screen's position
-        // (or the topLeft of all screens if no specific screen was selected)
         if (selectedScreen) {
+            // Single monitor mode (pre-selected)
             move(selectedScreen->geometry().topLeft());
+            QSize windowSize = pixmap().size();
+            if (pixmap().devicePixelRatio() > 1.0) {
+                windowSize =
+                  QSize(pixmap().width() / pixmap().devicePixelRatio(),
+                        pixmap().height() / pixmap().devicePixelRatio());
+            }
+            resize(windowSize);
+            if (windowHandle()) {
+                windowHandle()->setScreen(selectedScreen);
+            }
         } else {
+            // Multi-monitor mode: span all screens
             for (QScreen* const screen : QGuiApplication::screens()) {
                 QPoint topLeftScreen = screen->geometry().topLeft();
-
                 if (topLeftScreen.x() < topLeft.x()) {
                     topLeft.setX(topLeftScreen.x());
                 }
@@ -150,17 +159,16 @@ CaptureWidget::CaptureWidget(const CaptureRequest& req,
                 }
             }
             move(topLeft);
-        }
-        // On Windows, account for DPR when sizing the window
-        QSize windowSize = pixmap().size();
-        if (pixmap().devicePixelRatio() > 1.0) {
-            windowSize = QSize(pixmap().width() / pixmap().devicePixelRatio(),
-                               pixmap().height() / pixmap().devicePixelRatio());
-        }
-        resize(windowSize);
+            QSize windowSize = pixmap().size();
+            if (pixmap().devicePixelRatio() > 1.0) {
+                windowSize =
+                  QSize(pixmap().width() / pixmap().devicePixelRatio(),
+                        pixmap().height() / pixmap().devicePixelRatio());
+            }
+            resize(windowSize);
 
-        if (selectedScreen != nullptr && windowHandle()) {
-            windowHandle()->setScreen(selectedScreen);
+            // Enumerate windows for snap-to-window detection
+            m_windowDetector.refresh();
         }
 #elif defined(Q_OS_MACOS)
         QScreen* currentScreen = QGuiAppCurrentScreen().currentScreen();
@@ -190,6 +198,16 @@ CaptureWidget::CaptureWidget(const CaptureRequest& req,
 
     QVector<QRect> areas;
     if (m_context.fullscreen) {
+#if defined(Q_OS_WIN)
+        if (!selectedScreen) {
+            // Multi-monitor: use the full widget rect as the area
+            areas.append(QRect(QPoint(0, 0), size()));
+        } else {
+            QRect r = selectedScreen->geometry();
+            r.moveTo(0, 0);
+            areas.append(r);
+        }
+#else
         // Always display on a single screen, normalized to (0, 0)
         QScreen* screenForAreas = selectedScreen;
         if (!screenForAreas) {
@@ -201,6 +219,7 @@ CaptureWidget::CaptureWidget(const CaptureRequest& req,
         QRect r = screenForAreas ? screenForAreas->geometry() : QRect();
         r.moveTo(0, 0);
         areas.append(r);
+#endif
     } else {
         areas.append(rect());
     }
@@ -668,6 +687,21 @@ void CaptureWidget::paintEvent(QPaintEvent* paintEvent)
         save = true;
     }
     painter.drawPixmap(0, 0, m_context.screenshot);
+
+    // Draw window snap hover highlight
+    if (m_hoveredWindowRect.isValid() && !m_selection->isVisible()) {
+        painter.save();
+        QColor highlightColor = m_uiColor;
+        highlightColor.setAlpha(40);
+        painter.fillRect(m_hoveredWindowRect, highlightColor);
+        QPen borderPen(m_uiColor);
+        borderPen.setWidth(2);
+        painter.setPen(borderPen);
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRect(m_hoveredWindowRect);
+        painter.restore();
+    }
+
     if (m_selection && m_xywhDisplay) {
         const QRect& selection = m_selection->geometry().normalized();
         const qreal scale = m_context.screenshot.devicePixelRatio();
@@ -887,6 +921,21 @@ void CaptureWidget::mousePressEvent(QMouseEvent* e)
     } else if (e->button() == Qt::LeftButton) {
         m_mouseIsClicked = true;
 
+        // Window snap: if hovering over a detected window and no selection
+        // exists yet, snap the selection to that window's rect
+        if (m_hoveredWindowRect.isValid() && !m_selection->isVisible() &&
+            !m_activeButton && !m_activeTool) {
+            m_selection->show();
+            m_selection->setGeometry(m_hoveredWindowRect);
+            emit m_selection->geometrySettled();
+            m_buttonHandler->show();
+            m_hoveredWindowRect = QRect();
+            updateSelectionState();
+            updateCursor();
+            update();
+            return;
+        }
+
         // Click using a tool excluding tool MOVE
         if (startDrawObjectTool(m_mousePressedPos)) {
             // return if success
@@ -953,6 +1002,25 @@ void CaptureWidget::mouseMoveEvent(QMouseEvent* e)
     }
 
     m_context.mousePos = e->pos();
+
+    // Window snap hover detection: when no selection is visible, no tool
+    // is active, and no button is pressed, highlight the window under cursor
+    if (e->buttons() == Qt::NoButton && !m_selection->isVisible() &&
+        !m_activeButton && !m_activeTool &&
+        !m_windowDetector.windows().isEmpty()) {
+        QRect oldHover = m_hoveredWindowRect;
+        m_hoveredWindowRect =
+          m_windowDetector.windowAt(e->pos(), mapToGlobal(QPoint(0, 0)));
+        if (m_hoveredWindowRect != oldHover) {
+            if (oldHover.isValid()) {
+                update(oldHover.adjusted(-2, -2, 2, 2));
+            }
+            if (m_hoveredWindowRect.isValid()) {
+                update(m_hoveredWindowRect.adjusted(-2, -2, 2, 2));
+            }
+        }
+    }
+
     if (e->buttons() != Qt::LeftButton) {
         updateTool(activeButtonTool());
         updateCursor();

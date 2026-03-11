@@ -25,6 +25,7 @@
 #include <QTimer>
 #include <QUndoStack>
 #include <QWidget>
+#include "src/utils/windowdetector.h"
 
 class QLabel;
 class QPaintEvent;
@@ -232,4 +233,8 @@ private:
     int m_gridSize{ 10 };
 
     bool m_clipboardWorkaroundDone{ false };
+
+    // Window detection for snap-to-window
+    WindowDetector m_windowDetector;
+    QRect m_hoveredWindowRect; // in widget coords
 };
